@@ -10,7 +10,7 @@ from collections import deque
 import os
 import time
 
-from wireless_env import SimplifiedWirelessEnv, WirelessEnvConfig, flatten_obs
+from wireless_env import SimplifiedWirelessEnv, WirelessEnvConfig, flatten_obs, ActionNormalizer
 from ppo_agent import PPOAgent, PPOConfig, RolloutBuffer
 
 # ============================================================
@@ -40,7 +40,7 @@ os.makedirs(LOG_DIR, exist_ok=True)
 # 初始化
 # ============================================================
 
-env = SimplifiedWirelessEnv(ENV_CONFIG)
+env = ActionNormalizer(SimplifiedWirelessEnv(ENV_CONFIG))
 agent = PPOAgent(state_dim=8, config=PPO_CFG, device="cpu")
 buffer = RolloutBuffer()
 

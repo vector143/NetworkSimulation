@@ -880,15 +880,15 @@ class ActionNormalizer(gym.ActionWrapper):
 
     def action(self, action):
         """[-1,1] → 物理范围映射（Gym 自动调用）"""
-        cont = action["continuous"]
-        # 线性映射：[-1,1] → [low, high]
+        cont = np.asarray(action["continuous"], dtype=np.float32).flatten()
+        # 手动线性映射：[-1,1] → [low, high]
         real_cont = self.cont_low + (cont + 1.0) / 2.0 * (self.cont_high - self.cont_low)
         return {
-            "downtilt": real_cont[0:1],
-            "tx_power_offset": real_cont[1:2],
-            "p0_nominal_pusch": real_cont[2:3],
-            "drx_cycle": action["drx_cycle"],
-            "csi_rs_period": action["csi_rs_period"],
+            "downtilt": np.array([real_cont[0]], dtype=np.float32),
+            "tx_power_offset": np.array([real_cont[1]], dtype=np.float32),
+            "p0_nominal_pusch": np.array([real_cont[2]], dtype=np.float32),
+            "drx_cycle": int(action["drx_cycle"]),
+            "csi_rs_period": int(action["csi_rs_period"]),
         }
 
 # ===========================================================================

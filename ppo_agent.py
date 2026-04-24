@@ -206,10 +206,10 @@ class RolloutBuffer:
         self.actions_cont.append(action_dict["continuous"])
         self.actions_drx.append(action_dict["drx_cycle"])
         self.actions_csi.append(action_dict["csi_rs_period"])
-        self.log_probs.append(log_prob)
-        self.rewards.append(reward)
-        self.dones.append(done)
-        self.values.append(value)
+        self.log_probs.append(torch.tensor(log_prob))
+        self.rewards.append(torch.tensor(reward))
+        self.dones.append(torch.tensor(done))
+        self.values.append(torch.tensor(value))
 
     def get_all(self):
         """返回缓冲区中所有数据（作为 batch 用于 PPO 更新）"""
