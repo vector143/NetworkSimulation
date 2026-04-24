@@ -1,14 +1,17 @@
 import re
 import numpy as np
 
-with open(r"C:\Users\74138\Desktop\training_log.txt",encoding='utf-8') as f:
+with open(r"C:\Users\74138\Desktop\training_log_per.txt",encoding='utf-8') as f:
     lines = f.readlines()
 
 rewards = []
+count = 0
 for line in lines:
-    match = re.search(r"Avg Reward \(10 ep\):\s+([\d.]+)", line)
+    match = re.search(r"Avg Reward \(10 ep\):\s+(-?[\d.]+)", line)
     if match:
         rewards.append(float(match.group(1)))
+        print(f"第{count}轮: {rewards[-1]:.3f}")
+    count += 1
 
 # 按每10000步分段统计
 chunk_size = 50  # 约10000步

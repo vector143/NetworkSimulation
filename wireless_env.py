@@ -125,7 +125,8 @@ class WirelessEnvConfig:
     # ---- LLM 引导相关 ----
     # 默认奖励权重（当不使用 LLM 时），范围 0-1
     default_reward_weights: Dict[str, float] = field(default_factory=lambda: {
-        "throughput_dl": 1.0,
+        "throughput_dl": 0.7,
+        "delay": -0.3,
         # "throughput_ul": 0.15,
         # "delay": -0.15,
         # "energy_efficiency": 0.15,
@@ -158,6 +159,7 @@ OBSERVATION_SPACE = spaces.Dict({
 
 ACTION_SPACE = spaces.Dict({
     "downtilt": spaces.Box(low=-10.0, high=10.0, shape=(1,), dtype=np.float32),
+    "drx_cycle": spaces.Discrete(3),
 })
 
 # ACTION_SPACE = spaces.Dict({
@@ -493,13 +495,11 @@ class SimplifiedWirelessEnv(gym.Env):
             kpis: 字典，键名与 OBSERVATION_SPACE 一致，值都是形状为(1,)的 numpy 数组
         """
         # ---- 解析动作 ----
-        downtilt = float(action["downtilt"].item())
-        # .item() 把 numpy 标量转成 Python float，便于后续数学运算
-
-        tx_power_offset = float(action["tx_power_offset"].item())
-        p0_pusch = float(action["p0_nominal_pusch"].item())
-        drx_cycle_val = DRX_CYCLE_MAP[int(action["drx_cycle"])]
-        csi_rs_period_val = CSI_RS_PERIOD_MAP[int(action["csi_rs_period"])]
+        downtilt = float(action.get("downtilt", np.array([0.0])).item())
+        tx_power_offset = float(action.get("tx_power_offset", np.array([0.0])).item())
+        p0_pusch = float(action.get("p0_nominal_pusch", np.array([-111.0])).item())
+        drx_cycle_val = DRX_CYCLE_MAP.get(int(action.get("drx_cycle", 1)), 640)
+        csi_rs_period_val = CSI_RS_PERIOD_MAP.get(int(action.get("csi_rs_period", 1)), 40)
 
         # ---- 预计算常量 ----
         # 实际发射功率（dBm）= 配置值 + 偏置
@@ -799,7 +799,7 @@ class SimplifiedWirelessEnv(gym.Env):
         normalizers = {
             "throughput_dl": 100.0,  # 原来是 200，现在环境吞吐量 ~40，降到 100 让它贡献更大
             "throughput_ul": 50.0,
-            "delay": 100.0,  # 原来是 50，现在真实时延 100-180，提到 100 降低惩罚力度
+            "delay": 200.0,  # 原来是 50，现在真实时延 100-180，提到 100 降低惩罚力度,提到200继续降低力度
             "energy_efficiency": 50.0,
             "handover_success_rate": 100.0,
         }
@@ -919,10 +919,6 @@ if __name__ == "__main__":
     total_reward = 0
     for step_idx in range(10):
         action = env.action_space.sample()
-        action["tx_power_offset"] = np.array([0.0], dtype=np.float32)
-        action["p0_nominal_pusch"] = np.array([-111.0], dtype=np.float32)
-        action["drx_cycle"] = 1
-        action["csi_rs_period"] = 1
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
         print(f"  步 {step_idx + 1}: reward={reward:.3f}, sinr={obs['sinr'].item():.1f} dB, "

@@ -73,23 +73,22 @@ class Actor(nn.Module):
             nn.Linear(config.actor_hidden, config.actor_hidden),
             nn.Tanh(),
         )
-        # 连续动作：3 维（downtilt, tx_power_offset, p0_nominal_pusch）
-        self.mean_head = nn.Linear(config.actor_hidden, 3)
-        self.log_std = nn.Parameter(torch.zeros(3))  # 可学习的 log 标准差
+        # 连续动作：3 维（downtilt, tx_power_offset, p0_nominal_pusch）,暂时改为1维
+        self.mean_head = nn.Linear(config.actor_hidden, 1)
+        self.log_std = nn.Parameter(torch.zeros(1))  # 可学习的 log 标准差
 
-        # 离散动作：各 3 类（drx_cycle 3 档, csi_rs_period 3 档）
+        # 离散动作：各 3 类（drx_cycle 3 档, csi_rs_period 3 档），暂时设为drx_cycle一个
         self.discrete_heads = nn.ModuleDict({
             "drx_cycle": nn.Linear(config.actor_hidden, 3),
-            "csi_rs_period": nn.Linear(config.actor_hidden, 3),
         })
 
     def forward(self, state):
         """返回动作分布的参数（不采样）"""
         hidden = self.net(state)
 
-        # 连续动作
-        mean = torch.tanh(self.mean_head(hidden))  # [-1, 1] 范围
-        std = torch.exp(self.log_std.clamp(-20, 2))  # 限制 std 的范围
+        # 连续动作：输出维度由 mean_head 自动决定（现在是1维）
+        mean = torch.tanh(self.mean_head(hidden))
+        std = torch.exp(self.log_std.clamp(-20, 2))
 
         # 离散动作
         discrete_logits = {}
@@ -98,30 +97,67 @@ class Actor(nn.Module):
 
         return mean, std, discrete_logits
 
+    # def get_action(self, state, deterministic=False):
+    #     """采样动作并返回 log_prob
+    #
+    #     参数:
+    #         state: 状态张量
+    #         deterministic: True 时用均值（评估模式），False 时采样（训练模式）
+    #     返回:
+    #         action_dict: 包含 continuous 和离散动作的字典
+    #         log_prob: 整个动作的联合 log 概率（连续+离散）
+    #     """
+    #     mean, std, discrete_logits = self.forward(state)
+    #
+    #     # ---- 连续动作 ----
+    #     if deterministic:
+    #         cont_action = mean  # 直接用均值
+    #     else:
+    #         dist = Normal(mean, std)
+    #         cont_action = dist.rsample()  # rsample 支持重参数化
+    #
+    #     # 连续动作的 log_prob（对每个维度求和，得到联合 log 概率）
+    #     dist = Normal(mean, std)
+    #     cont_log_prob = dist.log_prob(cont_action).sum(dim=-1)
+    #
+    #     # ---- 离散动作 ----
+    #     disc_actions = {}
+    #     disc_log_prob = 0.0
+    #     for name, logits in discrete_logits.items():
+    #         dist = Categorical(logits=logits)
+    #         if deterministic:
+    #             action = torch.argmax(logits, dim=-1)
+    #         else:
+    #             action = dist.sample()
+    #         disc_actions[name] = action
+    #         disc_log_prob += dist.log_prob(action)
+    #
+    #     return {
+    #         "continuous": cont_action,
+    #         "drx_cycle": disc_actions["drx_cycle"],
+    #         "csi_rs_period": disc_actions["csi_rs_period"],
+    #     }, cont_log_prob + disc_log_prob
+
     def get_action(self, state, deterministic=False):
         """采样动作并返回 log_prob
 
-        参数:
-            state: 状态张量
-            deterministic: True 时用均值（评估模式），False 时采样（训练模式）
         返回:
             action_dict: 包含 continuous 和离散动作的字典
-            log_prob: 整个动作的联合 log 概率（连续+离散）
+            log_prob: 联合 log 概率
         """
         mean, std, discrete_logits = self.forward(state)
 
-        # ---- 连续动作 ----
+        # ---- 连续动作（1维：downtilt）----
         if deterministic:
-            cont_action = mean  # 直接用均值
+            cont_action = mean
         else:
             dist = Normal(mean, std)
-            cont_action = dist.rsample()  # rsample 支持重参数化
+            cont_action = dist.rsample()
 
-        # 连续动作的 log_prob（对每个维度求和，得到联合 log 概率）
         dist = Normal(mean, std)
         cont_log_prob = dist.log_prob(cont_action).sum(dim=-1)
 
-        # ---- 离散动作 ----
+        # ---- 离散动作（只有 drx_cycle）----
         disc_actions = {}
         disc_log_prob = 0.0
         for name, logits in discrete_logits.items():
@@ -133,11 +169,43 @@ class Actor(nn.Module):
             disc_actions[name] = action
             disc_log_prob += dist.log_prob(action)
 
+        # 组装动作字典：被屏蔽的维度填充默认值
         return {
-            "continuous": cont_action,
+            "continuous": cont_action,  # shape (batch, 1) 只含 downtilt
             "drx_cycle": disc_actions["drx_cycle"],
-            "csi_rs_period": disc_actions["csi_rs_period"],
+            "csi_rs_period": torch.zeros_like(disc_actions["drx_cycle"]),  # 默认值
         }, cont_log_prob + disc_log_prob
+
+    # def get_action(self, state, deterministic=False):
+    #     """采样动作并返回 log_prob
+    #
+    #     返回:
+    #         action_dict: 包含 continuous 和离散动作的字典
+    #         log_prob: 联合 log 概率（这里只有连续部分）
+    #     """
+    #     mean, std, discrete_logits = self.forward(state)
+    #
+    #     # ---- 连续动作（1维：downtilt）----
+    #     if deterministic:
+    #         cont_action = mean
+    #     else:
+    #         dist = Normal(mean, std)
+    #         cont_action = dist.rsample()
+    #
+    #     dist = Normal(mean, std)
+    #     cont_log_prob = dist.log_prob(cont_action).sum(dim=-1)
+    #
+    #     # ---- 离散动作：全部用默认值 ----
+    #     # drx_cycle 默认 2 (1280ms), csi_rs_period 默认 3 (160ms)
+    #     batch_size = cont_action.shape[0]
+    #     default_drx = torch.full((batch_size,), 2, dtype=torch.long, device=cont_action.device)
+    #     default_csi = torch.full((batch_size,), 3, dtype=torch.long, device=cont_action.device)
+    #
+    #     return {
+    #         "continuous": cont_action,
+    #         "drx_cycle": default_drx,
+    #         "csi_rs_period": default_csi,
+    #     }, cont_log_prob  # 只返回连续动作的 log_prob
 
     def evaluate_action(self, state, action_dict):
         """给定状态和旧动作，重新计算 log_prob（用于 PPO 更新时算 ratio）
@@ -195,7 +263,7 @@ class RolloutBuffer:
         self.states = []
         self.actions_cont = []  # 连续动作
         self.actions_drx = []  # 离散动作
-        self.actions_csi = []  # 离散动作
+        #self.actions_csi = []  # 离散动作
         self.log_probs = []
         self.rewards = []
         self.dones = []
@@ -205,7 +273,7 @@ class RolloutBuffer:
         self.states.append(state)
         self.actions_cont.append(action_dict["continuous"])
         self.actions_drx.append(action_dict["drx_cycle"])
-        self.actions_csi.append(action_dict["csi_rs_period"])
+        #self.actions_csi.append(action_dict["csi_rs_period"])
         self.log_probs.append(torch.tensor(log_prob))
         self.rewards.append(torch.tensor(reward))
         self.dones.append(torch.tensor(done))
@@ -217,7 +285,7 @@ class RolloutBuffer:
             "states": torch.FloatTensor(np.array(self.states)),
             "actions_cont": torch.stack(self.actions_cont),
             "actions_drx": torch.stack(self.actions_drx),
-            "actions_csi": torch.stack(self.actions_csi),
+            #"actions_csi": torch.stack(self.actions_csi),
             "log_probs": torch.stack(self.log_probs),
             "rewards": torch.FloatTensor(self.rewards),
             "dones": torch.FloatTensor(self.dones),
@@ -294,7 +362,7 @@ class PPOAgent:
         old_actions = {
             "continuous": data["actions_cont"].to(self.device),
             "drx_cycle": data["actions_drx"].to(self.device),
-            "csi_rs_period": data["actions_csi"].to(self.device),
+            #"csi_rs_period": data["actions_csi"].to(self.device),
         }
 
         # ---- 步骤 1：计算 GAE 优势函数 ----
@@ -318,7 +386,7 @@ class PPOAgent:
                 batch_actions = {
                     "continuous": old_actions["continuous"][batch_idx],
                     "drx_cycle": old_actions["drx_cycle"][batch_idx],
-                    "csi_rs_period": old_actions["csi_rs_period"][batch_idx],
+                    #"csi_rs_period": old_actions["csi_rs_period"][batch_idx],
                 }
                 batch_old_log_probs = old_log_probs[batch_idx]
                 batch_advantages = advantages[batch_idx]
@@ -351,32 +419,51 @@ class PPOAgent:
                 nn.utils.clip_grad_norm_(self.critic.parameters(), self.config.max_grad_norm)
                 self.critic_optimizer.step()
 
+    # def _compute_gae(self, rewards, values, dones):
+    #     """计算 GAE (Generalized Advantage Estimation) 优势函数
+    #
+    #     从轨迹末尾向前递推：
+    #     δ_t = r_t + γ·V(s_{t+1})·(1-done_t) - V(s_t)
+    #     A_t = δ_t + γ·λ·(1-done_t)·A_{t+1}
+    #
+    #     参数:
+    #         rewards: shape (T,)
+    #         values: shape (T,)
+    #         dones: shape (T,)
+    #     返回:
+    #         advantages: shape (T,)
+    #     """
+    #     T = len(rewards)
+    #     advantages = torch.zeros(T, device=self.device)
+    #     gae = 0.0
+    #
+    #     for t in reversed(range(T)):
+    #         if t == T - 1:
+    #             next_value = 0  # 终止状态的价值为 0
+    #         else:
+    #             next_value = values[t + 1] * (1 - dones[t])
+    #
+    #         delta = rewards[t] + self.config.gamma * next_value - values[t]
+    #         gae = delta + self.config.gamma * self.config.gae_lambda * (1 - dones[t]) * gae
+    #         advantages[t] = gae
+    #
+    #     return advantages
+
     def _compute_gae(self, rewards, values, dones):
-        """计算 GAE (Generalized Advantage Estimation) 优势函数
-
-        从轨迹末尾向前递推：
-        δ_t = r_t + γ·V(s_{t+1})·(1-done_t) - V(s_t)
-        A_t = δ_t + γ·λ·(1-done_t)·A_{t+1}
-
-        参数:
-            rewards: shape (T,)
-            values: shape (T,)
-            dones: shape (T,)
-        返回:
-            advantages: shape (T,)
-        """
         T = len(rewards)
         advantages = torch.zeros(T, device=self.device)
         gae = 0.0
 
         for t in reversed(range(T)):
             if t == T - 1:
-                next_value = 0  # 终止状态的价值为 0
+                next_value = 0
+                next_done = 1  # 最后一步之后视为终止
             else:
-                next_value = values[t + 1] * (1 - dones[t])
+                next_value = values[t + 1]
+                next_done = dones[t + 1]  # 改这里：用下一步的done
 
-            delta = rewards[t] + self.config.gamma * next_value - values[t]
-            gae = delta + self.config.gamma * self.config.gae_lambda * (1 - dones[t]) * gae
+            delta = rewards[t] + self.config.gamma * next_value * (1 - next_done) - values[t]
+            gae = delta + self.config.gamma * self.config.gae_lambda * (1 - next_done) * gae
             advantages[t] = gae
 
         return advantages

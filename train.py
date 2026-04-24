@@ -10,6 +10,8 @@ from collections import deque
 import os
 import time
 
+import torch
+
 from wireless_env import SimplifiedWirelessEnv, WirelessEnvConfig, flatten_obs, ActionNormalizer
 from ppo_agent import PPOAgent, PPOConfig, RolloutBuffer
 
@@ -24,9 +26,9 @@ ENV_CONFIG = WirelessEnvConfig(max_steps=200)
 PPO_CFG = PPOConfig(
     rollout_steps=2048,
     batch_size=64,
-    k_epochs=10,
+    k_epochs=3,
     lr_actor=3e-4,
-    lr_critic=1e-3,
+    lr_critic=3e-4,
 )
 
 # 训练
