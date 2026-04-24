@@ -82,7 +82,7 @@ class WirelessEnvConfig:
     pathloss_a: float = 28.0  # 截距项
     pathloss_b: float = 22.0  # 距离系数
     pathloss_c: float = 20.0  # 频率系数
-    shadowing_std: float = 4.0  # 阴影衰落标准差（dB），UMa LOS 场景
+    shadowing_std: float = 0.0  # 阴影衰落标准差（dB），UMa LOS 场景 从4.0改为1.0，再改为0，先舍弃
 
     # ---- 天线参数 ----
     tx_power: float = 46.0  # 基站发射功率（dBm），46dBm ≈ 40W
@@ -125,11 +125,11 @@ class WirelessEnvConfig:
     # ---- LLM 引导相关 ----
     # 默认奖励权重（当不使用 LLM 时），范围 0-1
     default_reward_weights: Dict[str, float] = field(default_factory=lambda: {
-        "throughput_dl": 0.35,
-        "throughput_ul": 0.15,
-        "delay": -0.15,
-        "energy_efficiency": 0.15,
-        "handover_success_rate": 0.20,  # 提高，鼓励优化覆盖
+        "throughput_dl": 1.0,
+        # "throughput_ul": 0.15,
+        # "delay": -0.15,
+        # "energy_efficiency": 0.15,
+        # "handover_success_rate": 0.20,  # 提高，鼓励优化覆盖
     })
 
 
@@ -157,22 +157,26 @@ OBSERVATION_SPACE = spaces.Dict({
 })
 
 ACTION_SPACE = spaces.Dict({
-    # 天线下倾角（度），-10 到 10
-    # 正数=往下倾斜，缩小覆盖；负数=往上倾斜，扩大覆盖
     "downtilt": spaces.Box(low=-10.0, high=10.0, shape=(1,), dtype=np.float32),
-    # 发射功率偏置（dB），-6 到 6
-    # 正值=增大功率（覆盖更好但费电、干扰大），负值=降低功率
-    "tx_power_offset": spaces.Box(low=-6.0, high=6.0, shape=(1,), dtype=np.float32),
-    # 上行功控基准 P0（dBm），-126 到 -96
-    # 值越高，手机发射功率越大，上行信号越好但手机更费电
-    "p0_nominal_pusch": spaces.Box(low=-126.0, high=-96.0, shape=(1,), dtype=np.float32),
-    # DRX 周期：0=320ms, 1=640ms, 2=1280ms
-    # 越大越省电，但用户响应越慢
-    "drx_cycle": spaces.Discrete(3),
-    # CSI-RS 周期：0=20ms, 1=40ms, 2=80ms, 3=160ms
-    # CSI-RS 用于测量信道质量，周期越小测量越准但开销越大
-    "csi_rs_period": spaces.Discrete(4),
 })
+
+# ACTION_SPACE = spaces.Dict({
+#     # 天线下倾角（度），-10 到 10
+#     # 正数=往下倾斜，缩小覆盖；负数=往上倾斜，扩大覆盖
+#     "downtilt": spaces.Box(low=-10.0, high=10.0, shape=(1,), dtype=np.float32),
+#     # 发射功率偏置（dB），-6 到 6
+#     # 正值=增大功率（覆盖更好但费电、干扰大），负值=降低功率
+#     "tx_power_offset": spaces.Box(low=-6.0, high=6.0, shape=(1,), dtype=np.float32),
+#     # 上行功控基准 P0（dBm），-126 到 -96
+#     # 值越高，手机发射功率越大，上行信号越好但手机更费电
+#     "p0_nominal_pusch": spaces.Box(low=-126.0, high=-96.0, shape=(1,), dtype=np.float32),
+#     # DRX 周期：0=320ms, 1=640ms, 2=1280ms
+#     # 越大越省电，但用户响应越慢
+#     "drx_cycle": spaces.Discrete(3),
+#     # CSI-RS 周期：0=20ms, 1=40ms, 2=80ms, 3=160ms
+#     # CSI-RS 用于测量信道质量，周期越小测量越准但开销越大
+#     "csi_rs_period": spaces.Discrete(4),
+# })
 
 # DRX 周期映射表（动作值→实际ms值）
 DRX_CYCLE_MAP = {0: 320, 1: 640, 2: 1280}
@@ -304,11 +308,11 @@ class SimplifiedWirelessEnv(gym.Env):
         # ---- 5. 计算初始 KPI ----
         # 使用默认动作（所有参数取中间值）计算初始观测
         default_action = {
-            "downtilt": np.array([0.0], dtype=np.float32),
-            "tx_power_offset": np.array([0.0], dtype=np.float32),
-            "p0_nominal_pusch": np.array([-111.0], dtype=np.float32),  # -96 和 -126 中间
-            "drx_cycle": 1,  # 640ms
-            "csi_rs_period": 1,  # 40ms
+            "downtilt": np.array([-8.0], dtype=np.float32),
+            "tx_power_offset": np.array([-5.0], dtype=np.float32),
+            "p0_nominal_pusch": np.array([-120], dtype=np.float32),  # -96 和 -126 中间
+            "drx_cycle": 2,   # 原来是 1 (640ms)，改成 1280ms
+            "csi_rs_period": 3,  # 原来是 1 (40ms)，改成 160ms
         }
         obs = self._simulate_network(default_action)
 
@@ -735,7 +739,7 @@ class SimplifiedWirelessEnv(gym.Env):
         # 垂直波束衰减：偏差越大，增益越低
         # 使用高斯型衰减（接近真实天线方向图）
         # 垂直 3dB 波束宽度约 10°
-        vertical_attenuation = -12 * (angle_diff / self.config.beamwidth_v) ** 2
+        vertical_attenuation = -24 * (angle_diff / self.config.beamwidth_v) ** 2  #从12改为24
 
         # ---- 水平衰减 ----
         # 简化：假设用户均匀分布在水平面，取平均水平增益
@@ -743,7 +747,7 @@ class SimplifiedWirelessEnv(gym.Env):
         horizontal_attenuation = 0  # 简化：不考虑水平方向偏差
 
         # ---- 总增益 ----
-        gain = self.config.antenna_gain_max #+ vertical_attenuation + horizontal_attenuation
+        gain = self.config.antenna_gain_max + vertical_attenuation + horizontal_attenuation
         # 增益不能低于 -20 dBi（实际天线有最低增益限制）
         gain = max(gain, -20.0)
 
@@ -915,6 +919,10 @@ if __name__ == "__main__":
     total_reward = 0
     for step_idx in range(10):
         action = env.action_space.sample()
+        action["tx_power_offset"] = np.array([0.0], dtype=np.float32)
+        action["p0_nominal_pusch"] = np.array([-111.0], dtype=np.float32)
+        action["drx_cycle"] = 1
+        action["csi_rs_period"] = 1
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
         print(f"  步 {step_idx + 1}: reward={reward:.3f}, sinr={obs['sinr'].item():.1f} dB, "
@@ -924,3 +932,22 @@ if __name__ == "__main__":
 
     print(f"\n总奖励: {total_reward:.3f}")
     print("测试通过！")
+
+    # === 新增：恒定默认动作测试（坏参数版）===
+    print("\n" + "=" * 60)
+    print("基线测试：恒定坏默认动作（200步总Reward）")
+    print("=" * 60)
+    env_test = SimplifiedWirelessEnv(config)
+    obs, _ = env_test.reset()
+    total_r = 0
+    bad_action = {
+        "downtilt": np.array([-8.0], dtype=np.float32),
+        "tx_power_offset": np.array([-5.0], dtype=np.float32),
+        "p0_nominal_pusch": np.array([-120.0], dtype=np.float32),
+        "drx_cycle": 2,
+        "csi_rs_period": 3,
+    }
+    for _ in range(200):
+        obs, reward, _, _, _ = env_test.step(bad_action)
+        total_r += reward
+    print(f"恒定坏默认动作 200步总Reward: {total_r:.1f}")
