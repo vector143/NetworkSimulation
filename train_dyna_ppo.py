@@ -36,15 +36,15 @@ PPO_CFG = PPOConfig(
 )
 
 # Dyna 参数  # === NEW ===
-NUM_IMAGINED = 5          # 每次想象生成几条轨迹
-IMAGINE_LEN = 10          # 每条想象轨迹多少步
+NUM_IMAGINED = 100          # 每次想象生成几条轨迹 5->100
+IMAGINE_LEN = 20         # 每条想象轨迹多少步 10->20
 PRETRAIN_EPOCHS = 3       # 想象数据预训几轮
 
 # 训练
 TOTAL_STEPS = 100_000
 SAVE_INTERVAL = 10_000
 LOG_INTERVAL = 1_000
-LOG_DIR = "logs_dyna"  # === NEW === 单独目录，方便和纯PPO对比
+LOG_DIR = "logs_dyna_update"  # === NEW === 单独目录，方便和纯PPO对比
 os.makedirs(LOG_DIR, exist_ok=True)
 
 
@@ -203,7 +203,7 @@ while total_steps < TOTAL_STEPS:
 # 训练结束：保存 & 画图
 # ============================================================
 
-agent.save(f"{LOG_DIR}/dyna_ppo_final.pt")
+agent.save(f"{LOG_DIR}/dyna_ppo_update_final.pt")
 
 # 画奖励曲线
 plt.figure(figsize=(12, 5))
