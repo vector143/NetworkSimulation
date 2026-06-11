@@ -49,48 +49,80 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 
 def imagination_phase(agent, model, real_trajectories,
-                      num_imagined=5, imagine_len=10, explore_noise_scale=1.5):
+                      num_imagined=50, imagine_len=10):
     """
-    从真实轨迹终点出发，用模型推演多条想象轨迹。
+    修复版：从多个状态起点，用策略采样动作，正确标记 done
     """
     imagined_buffer = RolloutBuffer()
 
-    default_action = {
-        "downtilt": np.array([0.0], dtype=np.float32),
-        "tx_power_offset": np.array([0.0], dtype=np.float32),
-        "p0_nominal_pusch": np.array([-111.0], dtype=np.float32),
-        "drx_cycle": 1,
-        "csi_rs_period": 1,
-    }
+    if len(real_trajectories) == 0:
+        return imagined_buffer
 
-    for _ in range(num_imagined):
-        # 1. 获取想象起点
-        state = real_trajectories[-1]['final_state']  # 注意键名是 'final_state'
+    area_size = 500.0  # 从环境配置获取，或传入参数
 
-        # 2. 推演 imagine_len 步
+    # 1. 收集所有可用的起点状态（不只用终点）
+    all_start_states = []
+    for traj in real_trajectories:
+        # 每个轨迹存了 final_state，但我们也可以存更多
+        # 如果只有 final_state，就先用它
+        all_start_states.append(traj['final_state'])
+
+    # 如果历史轨迹足够多，随机采样，不总是用最新的
+    num_samples = min(num_imagined, len(all_start_states))
+    sampled_states = np.random.choice(all_start_states, num_samples, replace=False)
+
+    for start_state in sampled_states:
+        state = {
+            'user_positions': start_state['user_positions'].copy(),
+            'user_velocities': start_state['user_velocities'].copy(),
+        }
+
         for step in range(imagine_len):
-            # a. 状态 → 观测
-            obs = model.compute_obs_from_state(state, default_action)
-            obs_vector = flatten_obs(obs)
+            # 修复1：用当前策略的动作来计算观测（关键！）
+            # 先用当前状态粗略选动作，再计算准确的观测
+            # 由于 compute_obs_from_state 需要动作，我们先用默认动作占位
+            # 更好的做法：先采样动作，再用这个动作算观测
 
-            # b. 用当前策略选动作
-            action_dict, log_prob, value = agent.get_action(obs_vector)
+            # 方法：先用一个临时观测选动作（临时观测用默认动作算）
+            temp_obs = model.compute_obs_from_state(state, {
+                "downtilt": np.array([0.0], dtype=np.float32),
+                "tx_power_offset": np.array([0.0], dtype=np.float32),
+                "p0_nominal_pusch": np.array([-111.0], dtype=np.float32),
+                "drx_cycle": 1,
+                "csi_rs_period": 1,
+            })
+            temp_obs_vec = flatten_obs(temp_obs)
 
-            # c. 用模型推演一步
+            # 用策略采样动作
+            action_dict, log_prob, value = agent.get_action(temp_obs_vec)
+
+            # 修复2：用选出的动作重新计算准确的观测
+            true_obs = model.compute_obs_from_state(state, action_dict)
+            true_obs_vec = flatten_obs(true_obs)
+
+            # 模型推演一步
             next_state, next_obs, reward = model.step(state, action_dict)
 
-            # d. 存入缓冲区
+            # 修复3：正确判断 done（用户是否移出边界）
+            positions = next_state['user_positions']
+            done = bool(
+                (positions.min() < 0) or
+                (positions.max() > area_size)
+            )
+
+            # 存入缓冲区（用正确的观测）
             imagined_buffer.add(
-                state=obs_vector,
+                state=true_obs_vec,
                 action_dict=action_dict,
                 log_prob=log_prob,
                 reward=reward,
-                done=False,
+                done=done,
                 value=value
             )
 
-            # e. 更新状态
             state = next_state
+            if done:
+                break
 
     return imagined_buffer
 
