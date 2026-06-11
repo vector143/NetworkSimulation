@@ -36,8 +36,8 @@ PPO_CFG = PPOConfig(
 )
 
 # Dyna 参数  # === NEW ===
-NUM_IMAGINED = 5          # 每次想象生成几条轨迹
-IMAGINE_LEN = 10          # 每条想象轨迹多少步
+NUM_IMAGINED = 200          # 每次想象生成几条轨迹
+IMAGINE_LEN = 5          # 每条想象轨迹多少步
 PRETRAIN_EPOCHS = 3       # 想象数据预训几轮
 
 # 训练

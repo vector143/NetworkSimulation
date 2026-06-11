@@ -1,8 +1,7 @@
 """
-GRPO 训练脚本
-=============
-接 wireless_env + grpo_agent + EvaluateActionWrapper，
-跑完整的 GRPO 训练循环并保存结果，与 PPO 基线对比。
+GRPO 训练脚本 (修正版)
+=====================
+核心修正：选组内优势最大的动作执行，而非固定取第一个
 """
 
 import numpy as np
@@ -33,7 +32,7 @@ GRPO_CFG = GRPOConfig(
 TOTAL_STEPS = 100_000
 SAVE_INTERVAL = 10_000
 LOG_INTERVAL = 1_000
-LOG_DIR = "logs_grpo"
+LOG_DIR = "logs_grpo_fixed"
 os.makedirs(LOG_DIR, exist_ok=True)
 
 # ============================================================
@@ -58,23 +57,25 @@ print(f"开始 GRPO 训练，总步数: {TOTAL_STEPS}")
 start_time = time.time()
 
 # ============================================================
-# 训练主循环
+# 训练主循环 (修正版)
 # ============================================================
 while total_steps < TOTAL_STEPS:
-    # ---- 1. 采样组内动作并计算优势 ----
+    # ---- 1. 采样G个动作，计算组内优势 ----
     state_tensor = torch.FloatTensor(state_vec).unsqueeze(0)
 
-    with torch.no_grad():
-        # 采样G个动作，计算组内优势
-        actions, log_probs, advantages, rewards, entropy = agent.compute_group_advantages(
-            state_tensor, env, state_vec
-        )
+    actions, log_probs, advantages, rewards, entropy = agent.compute_group_advantages(
+        state_tensor, env, state_vec
+    )
+    # actions: list of G action dicts
+    # advantages: tensor shape (G,), 已做组内标准化
+    # rewards: tensor shape (G,), 真实奖励
 
-    # ---- 2. 取组内第一个动作作为真正执行的动作 ----
-    action_dict = actions[0]
-    log_prob = log_probs[0].item()
-    advantage = advantages[0].item()
-    reward_eval = rewards[0].item()
+    # ---- 2. 核心修正：选组内优势最大的动作执行 ----
+    best_idx = torch.argmax(advantages).item()  # 或 torch.argmax(rewards)
+    action_dict = actions[best_idx]
+    log_prob = log_probs[best_idx].item()
+    advantage = advantages[best_idx].item()
+    best_reward = rewards[best_idx].item()  # 可选，用于日志
 
     # ---- 3. 环境执行选定的动作 ----
     next_state, reward, terminated, truncated, info = env.step(action_dict)
@@ -88,15 +89,15 @@ while total_steps < TOTAL_STEPS:
     episode_reward += reward
     total_steps += 1
 
-    # ---- 4. 更新状态 ----
+    # ---- 5. 更新状态 ----
     state_vec = next_state_vec
 
-    # ---- 5. buffer 满了就更新 ----
+    # ---- 6. buffer 满了就更新 ----
     if len(buffer) >= GRPO_CFG.rollout_steps:
         agent.update(buffer)
         buffer.clear()
 
-    # ---- 6. episode 结束 ----
+    # ---- 7. episode 结束 ----
     if done:
         episode_count += 1
         episode_rewards.append(episode_reward)
@@ -106,14 +107,14 @@ while total_steps < TOTAL_STEPS:
         state_vec = flatten_obs(state)
         episode_reward = 0
 
-    # ---- 7. 打印日志 ----
+    # ---- 8. 打印日志 ----
     if total_steps % LOG_INTERVAL == 0 and episode_count > 0:
         avg_r = np.mean(recent_rewards) if recent_rewards else 0
         elapsed = time.time() - start_time
         print(f"Step {total_steps:6d} | Episode {episode_count:4d} | "
               f"Avg Reward (10 ep): {avg_r:7.2f} | Time: {elapsed:.0f}s")
 
-    # ---- 8. 保存模型 ----
+    # ---- 9. 保存模型 ----
     if total_steps % SAVE_INTERVAL == 0:
         agent.save(f"{LOG_DIR}/grpo_step_{total_steps}.pt")
 
@@ -130,7 +131,7 @@ if len(episode_rewards) > 10:
     plt.plot(range(9, len(episode_rewards)), smoothed, label="Smoothed (10 ep)")
 plt.xlabel("Episode")
 plt.ylabel("Total Reward")
-plt.title("GRPO on Wireless Network Optimization")
+plt.title("GRPO on Wireless Network Optimization (Fixed)")
 plt.legend()
 plt.grid(True)
 
@@ -144,7 +145,7 @@ plt.title("Step-level Reward (Smoothed)")
 plt.grid(True)
 
 plt.tight_layout()
-plt.savefig(f"{LOG_DIR}/training_curve_grpo.png", dpi=150)
+plt.savefig(f"{LOG_DIR}/training_curve_grpo_fixed.png", dpi=150)
 plt.show()
 
 print(f"训练完成！共 {episode_count} 个 Episode, {total_steps} 步")

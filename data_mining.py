@@ -1,7 +1,7 @@
 import re
 import numpy as np
 
-with open(r"C:\Users\74138\Desktop\training_log_dyna_ppo.txt",encoding='utf-8') as f:
+with open(r"C:\Users\74138\Desktop\dyna_ppo2.txt",encoding='utf-8') as f:
     lines = f.readlines()
 
 rewards = []
